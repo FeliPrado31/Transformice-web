@@ -110,6 +110,21 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
               ? input.href
               : input.url;
 
+          // Interceptar URLs absolutas de vercel.app que intentan cargar recursos
+          if (
+            url.includes("vercel.app/images/") ||
+            url.includes("vercel.app/langues/") ||
+            url.includes("vercel.app/drapeaux/")
+          ) {
+            const pathMatch = url.match(/vercel\.app\/(.+?)(?:\?|#|$)/);
+            if (pathMatch && pathMatch[1]) {
+              const resourcePath = pathMatch[1];
+              const proxyUrl = `/api/proxy-images/${resourcePath}`;
+              console.log(`🔄 Vercel URL: ${url} → ${proxyUrl}`);
+              return originalFetch(proxyUrl, init);
+            }
+          }
+
           // Interceptar CUALQUIER petición a transformice.com
           if (url.includes("transformice.com/")) {
             const pathMatch = url.match(/transformice\.com\/(.*?)(?:\?|#|$)/);
@@ -147,6 +162,28 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
           password?: string | null
         ) {
           const urlString = typeof url === "string" ? url : url.toString();
+
+          // Interceptar URLs absolutas de vercel.app
+          if (
+            urlString.includes("vercel.app/images/") ||
+            urlString.includes("vercel.app/langues/") ||
+            urlString.includes("vercel.app/drapeaux/")
+          ) {
+            const pathMatch = urlString.match(/vercel\.app\/(.+?)(?:\?|#|$)/);
+            if (pathMatch && pathMatch[1]) {
+              const resourcePath = pathMatch[1];
+              const proxyUrl = `/api/proxy-images/${resourcePath}`;
+              console.log(`🔄 XHR Vercel URL: ${urlString} → ${proxyUrl}`);
+              return originalXHROpen.call(
+                this,
+                method,
+                proxyUrl,
+                async,
+                username,
+                password
+              );
+            }
+          }
 
           // Interceptar CUALQUIER petición a transformice.com
           if (urlString.includes("transformice.com/")) {
