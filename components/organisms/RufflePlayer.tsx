@@ -38,9 +38,8 @@ const loadRuffleScript = (): Promise<void> =>
     }
 
     const script = document.createElement("script");
-    script.src =
-      "https://unpkg.com/@ruffle-rs/ruffle@0.1.0-nightly.2024.12.31/ruffle.js";
-    script.async = true;
+    script.src = "https://unpkg.com/@ruffle-rs/ruffle/ruffle.js";
+    script.async = false;
     script.setAttribute("data-ruffle", "true");
     script.onload = () => resolve();
     script.onerror = () => reject(new Error("Failed to load Ruffle script"));
@@ -88,6 +87,7 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
 
   useEffect(() => {
     let mounted = true;
+    let player: RuffleInstance | null = null;
     const container = containerRef.current;
 
     async function loadRuffle() {
@@ -97,22 +97,91 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
         setIsLoading(true);
         setError(null);
 
-        // Configurar RufflePlayer DESPUÉS de cargar el script
-        await loadRuffleScript();
+        // Interceptar TODAS las peticiones a transformice.com para descargarlas automáticamente
+        const originalFetch = window.fetch;
+        window.fetch = function (
+          input: RequestInfo | URL,
+          init?: RequestInit
+        ): Promise<Response> {
+          const url =
+            typeof input === "string"
+              ? input
+              : input instanceof URL
+              ? input.href
+              : input.url;
 
+          // Interceptar CUALQUIER petición a transformice.com
+          if (url.includes("transformice.com/")) {
+            const pathMatch = url.match(/transformice\.com\/(.*?)(?:\?|$)/);
+            if (pathMatch && pathMatch[1]) {
+              const resourcePath = pathMatch[1];
+              const proxyUrl = `/api/proxy-images/${resourcePath}`;
+              console.log(`🔄 Recurso: ${url} → ${proxyUrl}`);
+              return originalFetch(proxyUrl, init);
+            }
+          }
+
+          // Todo lo demás pasa directo
+          return originalFetch(input, init);
+        };
+
+        // También interceptar XMLHttpRequest para cualquier recurso de transformice.com
+        const originalXHROpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function (
+          method: string,
+          url: string | URL,
+          async: boolean = true,
+          username?: string | null,
+          password?: string | null
+        ) {
+          const urlString = typeof url === "string" ? url : url.toString();
+
+          // Interceptar CUALQUIER petición a transformice.com
+          if (urlString.includes("transformice.com/")) {
+            const pathMatch = urlString.match(
+              /transformice\.com\/(.*?)(?:\?|$)/
+            );
+            if (pathMatch && pathMatch[1]) {
+              const resourcePath = pathMatch[1];
+              const proxyUrl = `/api/proxy-images/${resourcePath}`;
+              console.log(`🔄 XHR Recurso: ${urlString} → ${proxyUrl}`);
+              return originalXHROpen.call(
+                this,
+                method,
+                proxyUrl,
+                async,
+                username,
+                password
+              );
+            }
+          }
+
+          return originalXHROpen.call(
+            this,
+            method,
+            url,
+            async,
+            username,
+            password
+          );
+        };
+
+        // Configurar RufflePlayer ANTES de cargar el script
         window.RufflePlayer = window.RufflePlayer || {};
         window.RufflePlayer.config = {
           preloader: false,
           warnOnUnsupportedContent: false,
-          logLevel: "debug",
+          logLevel: "warn",
           autoplay: "on",
           unmuteOverlay: "hidden",
           letterbox: "fullscreen",
-          backgroundColor: "#000000",
+          backgroundColor: "#6a7495",
           contextMenu: false,
           showSwfDownload: false,
           socketProxy: SOCKET_PROXY_ENTRIES,
         };
+
+        await loadRuffleScript();
 
         if (!mounted || !container) return;
 
@@ -121,20 +190,49 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
           throw new Error("Ruffle could not initialize");
         }
 
-        const player = createPlayer();
+        player = createPlayer();
 
         player.style.width = "100%";
         player.style.height = "100%";
-        player.load("/Transformice.swf");
+        player.style.display = "block";
 
-        container.replaceChildren(player);
+        // Adjuntar al DOM primero
+        container.appendChild(player);
+
+        // Esperar un momento para que el elemento esté completamente en el DOM
+        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        // Agregar listeners de eventos
+        player.addEventListener("loadeddata", () => {
+          console.log("🎮 SWF loaded successfully");
+          if (mounted) {
+            setIsLoading(false);
+          }
+        });
+
+        player.addEventListener("error", (e) => {
+          console.error("❌ Ruffle error:", e);
+          if (mounted) {
+            setError("Error loading game");
+            setIsLoading(false);
+          }
+        });
+
+        // Ahora sí cargar el SWF
+        console.log("📂 Loading Transformice.swf...");
+        player.load("/Transformice.swf");
 
         console.log(
           `✅ Ruffle player ready → server ${TRANSFORMICE_HOST}:${PRIMARY_TRANSFORMICE_PORT} via ${SOCKET_PROXY_URL}`
         );
-        if (mounted) {
-          setIsLoading(false);
-        }
+
+        // Timeout de seguridad para ocultar el loading
+        setTimeout(() => {
+          if (mounted) {
+            console.log("⏱️ Loading timeout - hiding loader");
+            setIsLoading(false);
+          }
+        }, 5000);
       } catch (err) {
         console.error("Error loading Ruffle:", err);
         if (mounted) {
@@ -148,6 +246,13 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
 
     return () => {
       mounted = false;
+      if (player) {
+        try {
+          player.remove();
+        } catch (e) {
+          console.error("Error removing player:", e);
+        }
+      }
       if (container) {
         container.innerHTML = "";
       }
