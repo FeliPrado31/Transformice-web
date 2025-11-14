@@ -4,12 +4,28 @@ import { useEffect, useRef, useState } from "react";
 
 const TRANSFORMICE_HOST =
   process.env.NEXT_PUBLIC_TRANSFORMICE_HOST ?? "15.204.211.244";
-const TRANSFORMICE_PORT = Number.parseInt(
+const SOCKET_PROXY_URL =
+  process.env.NEXT_PUBLIC_SOCKET_PROXY_URL ?? "ws://localhost:2096";
+const PRIMARY_TRANSFORMICE_PORT_RAW = Number.parseInt(
   process.env.NEXT_PUBLIC_TRANSFORMICE_PORT ?? "11801",
   10
 );
-const SOCKET_PROXY_URL =
-  process.env.NEXT_PUBLIC_SOCKET_PROXY_URL ?? "ws://localhost:2096";
+const PRIMARY_TRANSFORMICE_PORT = Number.isFinite(PRIMARY_TRANSFORMICE_PORT_RAW)
+  ? PRIMARY_TRANSFORMICE_PORT_RAW
+  : 11801;
+const TRANSFORMICE_PORTS = (
+  process.env.NEXT_PUBLIC_TRANSFORMICE_PORTS ?? "11801,12801,13801,14801"
+)
+  .split(",")
+  .map((value) => Number.parseInt(value.trim(), 10))
+  .filter((port) => Number.isFinite(port) && port > 0);
+const SOCKET_PROXY_ENTRIES = (
+  TRANSFORMICE_PORTS.length ? TRANSFORMICE_PORTS : [PRIMARY_TRANSFORMICE_PORT]
+).map((port) => ({
+  host: TRANSFORMICE_HOST,
+  port,
+  proxyUrl: `${SOCKET_PROXY_URL}?port=${port}`,
+}));
 
 declare global {
   interface Window {
@@ -111,13 +127,11 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
           logLevel: "info",
           autoplay: "on",
           unmuteOverlay: "hidden",
-          socketProxy: [
-            {
-              host: TRANSFORMICE_HOST,
-              port: TRANSFORMICE_PORT,
-              proxyUrl: SOCKET_PROXY_URL,
-            },
-          ],
+          letterbox: "fullscreen",
+          backgroundColor: "#000000",
+          contextMenu: false,
+          showSwfDownload: false,
+          socketProxy: SOCKET_PROXY_ENTRIES,
         };
 
         // Load Ruffle from CDN to avoid WASM loading issues
@@ -148,7 +162,7 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
             `;
 
             console.log(
-              `✅ Ruffle player ready → server ${TRANSFORMICE_HOST}:${TRANSFORMICE_PORT} via ${SOCKET_PROXY_URL}`
+              `✅ Ruffle player ready → server ${TRANSFORMICE_HOST}:${PRIMARY_TRANSFORMICE_PORT} via ${SOCKET_PROXY_URL}`
             );
             if (mounted) {
               setIsLoading(false);
