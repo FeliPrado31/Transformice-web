@@ -31,53 +31,83 @@ export async function GET(
     const resourcePath = pathArray.join("/");
     const localPath = path.join(process.cwd(), "public", resourcePath);
 
-    // Verificar si el archivo existe localmente
+    // Verificar si el archivo existe localmente Y tiene contenido
     if (fs.existsSync(localPath)) {
-      console.log(`✅ [PROXY] Sirviendo local: ${resourcePath}`);
-      const fileBuffer = fs.readFileSync(localPath);
-      const contentType = getContentType(localPath);
+      const stats = fs.statSync(localPath);
+      if (stats.size > 0) {
+        console.log(`✅ [PROXY] Sirviendo local: ${resourcePath}`);
+        const fileBuffer = fs.readFileSync(localPath);
+        const contentType = getContentType(localPath);
 
-      return new NextResponse(fileBuffer, {
-        headers: {
-          "Content-Type": contentType,
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=31536000, immutable",
-        },
-      });
+        return new NextResponse(fileBuffer, {
+          headers: {
+            "Content-Type": contentType,
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "public, max-age=31536000, immutable",
+          },
+        });
+      } else {
+        console.log(
+          `⚠️  [PROXY] Archivo local vacío, reintentando descarga: ${resourcePath}`
+        );
+      }
     }
 
-    // Si no existe localmente, intentar descargar de transformice.com
+    // Si no existe localmente o está vacío, intentar descargar de transformice.com
     console.log(
       `⬇️  [PROXY] Descargando desde transformice.com: ${resourcePath}`
     );
-    const externalUrl = `http://www.transformice.com/${resourcePath}`;
-    const response = await fetch(externalUrl);
 
-    if (!response.ok) {
-      console.error(`❌ [PROXY] No encontrado: ${resourcePath}`);
-      return new NextResponse("Resource not found", { status: 404 });
+    // Intentar múltiples URLs si es necesario
+    const urls = [
+      `http://www.transformice.com/${resourcePath}`,
+      `https://www.transformice.com/${resourcePath}`,
+    ];
+
+    let lastError: Error | null = null;
+    for (const externalUrl of urls) {
+      try {
+        const response = await fetch(externalUrl, {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          },
+        });
+
+        if (response.ok) {
+          const buffer = await response.arrayBuffer();
+
+          // Guardar localmente para futuras peticiones
+          const dir = path.dirname(localPath);
+          if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+          }
+          fs.writeFileSync(localPath, Buffer.from(buffer));
+          console.log(
+            `💾 [PROXY] Guardado localmente: ${resourcePath} (${buffer.byteLength} bytes)`
+          );
+
+          const contentType =
+            response.headers.get("Content-Type") || getContentType(localPath);
+
+          return new NextResponse(buffer, {
+            headers: {
+              "Content-Type": contentType,
+              "Access-Control-Allow-Origin": "*",
+              "Cache-Control": "public, max-age=31536000, immutable",
+            },
+          });
+        }
+      } catch (err) {
+        lastError = err as Error;
+        console.log(
+          `⚠️  [PROXY] Fallo con ${externalUrl}, intentando siguiente...`
+        );
+      }
     }
 
-    const buffer = await response.arrayBuffer();
-
-    // Guardar localmente para futuras peticiones
-    const dir = path.dirname(localPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(localPath, Buffer.from(buffer));
-    console.log(`💾 [PROXY] Guardado localmente: ${resourcePath}`);
-
-    const contentType =
-      response.headers.get("Content-Type") || getContentType(localPath);
-
-    return new NextResponse(buffer, {
-      headers: {
-        "Content-Type": contentType,
-        "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "public, max-age=31536000, immutable",
-      },
-    });
+    console.error(`❌ [PROXY] No encontrado en ninguna URL: ${resourcePath}`);
+    return new NextResponse("Resource not found", { status: 404 });
   } catch (error) {
     console.error(`❌ [PROXY] Error: ${error}`);
     return new NextResponse("Internal Server Error", { status: 500 });

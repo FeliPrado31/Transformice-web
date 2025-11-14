@@ -112,13 +112,25 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
 
           // Interceptar CUALQUIER petición a transformice.com
           if (url.includes("transformice.com/")) {
-            const pathMatch = url.match(/transformice\.com\/(.*?)(?:\?|$)/);
+            const pathMatch = url.match(/transformice\.com\/(.*?)(?:\?|#|$)/);
             if (pathMatch && pathMatch[1]) {
               const resourcePath = pathMatch[1];
               const proxyUrl = `/api/proxy-images/${resourcePath}`;
               console.log(`🔄 Recurso: ${url} → ${proxyUrl}`);
               return originalFetch(proxyUrl, init);
             }
+          }
+
+          // Si es una petición relativa que falla, intentar desde transformice.com
+          if (
+            !url.startsWith("http") &&
+            !url.startsWith("//_next/") &&
+            !url.startsWith("/api/")
+          ) {
+            console.log(
+              `🔄 Ruta relativa: ${url} → /api/proxy-images/images/${url}`
+            );
+            return originalFetch(`/api/proxy-images/images/${url}`, init);
           }
 
           // Todo lo demás pasa directo
@@ -139,7 +151,7 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
           // Interceptar CUALQUIER petición a transformice.com
           if (urlString.includes("transformice.com/")) {
             const pathMatch = urlString.match(
-              /transformice\.com\/(.*?)(?:\?|$)/
+              /transformice\.com\/(.*?)(?:\?|#|$)/
             );
             if (pathMatch && pathMatch[1]) {
               const resourcePath = pathMatch[1];
@@ -154,6 +166,25 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
                 password
               );
             }
+          }
+
+          // Si es una petición relativa que falla, intentar desde transformice.com
+          if (
+            !urlString.startsWith("http") &&
+            !urlString.startsWith("//_next/") &&
+            !urlString.startsWith("/api/")
+          ) {
+            console.log(
+              `🔄 XHR Ruta relativa: ${urlString} → /api/proxy-images/images/${urlString}`
+            );
+            return originalXHROpen.call(
+              this,
+              method,
+              `/api/proxy-images/images/${urlString}`,
+              async,
+              username,
+              password
+            );
           }
 
           return originalXHROpen.call(
