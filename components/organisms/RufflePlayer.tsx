@@ -150,8 +150,10 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
           return response;
         };
 
-        // También interceptar XMLHttpRequest para cualquier recurso de transformice.com
+        // Interceptar XMLHttpRequest para capturar 404s
         const originalXHROpen = XMLHttpRequest.prototype.open;
+        const originalXHRSend = XMLHttpRequest.prototype.send;
+
         XMLHttpRequest.prototype.open = function (
           method: string,
           url: string | URL,
@@ -159,69 +161,10 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
           username?: string | null,
           password?: string | null
         ) {
-          const urlString = typeof url === "string" ? url : url.toString();
-
-          // Interceptar URLs absolutas de vercel.app
-          if (
-            urlString.includes("vercel.app/images/") ||
-            urlString.includes("vercel.app/langues/") ||
-            urlString.includes("vercel.app/drapeaux/")
-          ) {
-            const pathMatch = urlString.match(/vercel\.app\/(.+?)(?:\?|#|$)/);
-            if (pathMatch && pathMatch[1]) {
-              const resourcePath = pathMatch[1];
-              const proxyUrl = `/api/proxy-images/${resourcePath}`;
-              console.log(`🔄 XHR Vercel URL: ${urlString} → ${proxyUrl}`);
-              return originalXHROpen.call(
-                this,
-                method,
-                proxyUrl,
-                async,
-                username,
-                password
-              );
-            }
-          }
-
-          // Interceptar CUALQUIER petición a transformice.com
-          if (urlString.includes("transformice.com/")) {
-            const pathMatch = urlString.match(
-              /transformice\.com\/(.*?)(?:\?|#|$)/
-            );
-            if (pathMatch && pathMatch[1]) {
-              const resourcePath = pathMatch[1];
-              const proxyUrl = `/api/proxy-images/${resourcePath}`;
-              console.log(`🔄 XHR Recurso: ${urlString} → ${proxyUrl}`);
-              return originalXHROpen.call(
-                this,
-                method,
-                proxyUrl,
-                async,
-                username,
-                password
-              );
-            }
-          }
-
-          // Si es una petición relativa que falla, intentar desde transformice.com
-          if (
-            !urlString.startsWith("http") &&
-            !urlString.startsWith("//_next/") &&
-            !urlString.startsWith("/api/")
-          ) {
-            console.log(
-              `🔄 XHR Ruta relativa: ${urlString} → /api/proxy-images/images/${urlString}`
-            );
-            return originalXHROpen.call(
-              this,
-              method,
-              `/api/proxy-images/images/${urlString}`,
-              async,
-              username,
-              password
-            );
-          }
-
+          // Guardar la URL original en el objeto XHR
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (this as any)._originalUrl =
+            typeof url === "string" ? url : url.toString();
           return originalXHROpen.call(
             this,
             method,
@@ -230,6 +173,76 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
             username,
             password
           );
+        };
+
+        XMLHttpRequest.prototype.send = function (
+          body?: Document | XMLHttpRequestBodyInit | null
+        ) {
+          // eslint-disable-next-line @typescript-eslint/no-this-alias
+          const self = this;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const originalUrl = (self as any)._originalUrl;
+
+          // Interceptar el evento load para detectar 404
+          const originalOnLoad = self.onload;
+          self.onload = function (event) {
+            if (self.status === 404 && originalUrl) {
+              let resourcePath: string | null = null;
+
+              // Extraer ruta de URLs de vercel.app
+              if (
+                originalUrl.includes("vercel.app/images/") ||
+                originalUrl.includes("vercel.app/langues/") ||
+                originalUrl.includes("vercel.app/drapeaux/")
+              ) {
+                const pathMatch = originalUrl.match(
+                  /vercel\.app\/(.+?)(?:\?|#|$)/
+                );
+                if (pathMatch && pathMatch[1]) {
+                  resourcePath = pathMatch[1];
+                }
+              }
+              // Extraer ruta de URLs de transformice.com
+              else if (originalUrl.includes("transformice.com/")) {
+                const pathMatch = originalUrl.match(
+                  /transformice\.com\/(.*?)(?:\?|#|$)/
+                );
+                if (pathMatch && pathMatch[1]) {
+                  resourcePath = pathMatch[1];
+                }
+              }
+
+              // Si encontramos una ruta válida, reintentar con el proxy
+              if (resourcePath) {
+                const proxyUrl = `/api/proxy-images/${resourcePath}`;
+                console.log(
+                  `⚠️  XHR 404 detectado: ${originalUrl} → Descargando vía ${proxyUrl}`
+                );
+
+                // Crear nueva petición con el proxy
+                const newXhr = new XMLHttpRequest();
+                originalXHROpen.call(newXhr, "GET", proxyUrl, true);
+
+                // Copiar handlers del XHR original
+                if (originalOnLoad) {
+                  newXhr.onload = originalOnLoad.bind(self);
+                }
+                newXhr.onerror = self.onerror;
+                newXhr.onprogress = self.onprogress;
+                newXhr.responseType = self.responseType;
+
+                originalXHRSend.call(newXhr, body);
+                return;
+              }
+            }
+
+            // Llamar al handler original si existe
+            if (originalOnLoad) {
+              originalOnLoad.call(self, event);
+            }
+          };
+
+          return originalXHRSend.call(this, body);
         };
 
         // Configurar RufflePlayer ANTES de cargar el script
