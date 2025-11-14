@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-export function middleware(request: NextRequest) {
+export default function proxy(request: NextRequest) {
   // Interceptar peticiones que el SWF hace a transformice.com
   const url = request.nextUrl.clone();
 
