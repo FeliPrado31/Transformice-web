@@ -97,9 +97,9 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
         setIsLoading(true);
         setError(null);
 
-        // Interceptar TODAS las peticiones a transformice.com para descargarlas automáticamente
+        // Interceptar fetch para capturar 404s y descargar recursos faltantes
         const originalFetch = window.fetch;
-        window.fetch = function (
+        window.fetch = async function (
           input: RequestInfo | URL,
           init?: RequestInit
         ): Promise<Response> {
@@ -110,46 +110,44 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
               ? input.href
               : input.url;
 
-          // Interceptar URLs absolutas de vercel.app que intentan cargar recursos
-          if (
-            url.includes("vercel.app/images/") ||
-            url.includes("vercel.app/langues/") ||
-            url.includes("vercel.app/drapeaux/")
-          ) {
-            const pathMatch = url.match(/vercel\.app\/(.+?)(?:\?|#|$)/);
-            if (pathMatch && pathMatch[1]) {
-              const resourcePath = pathMatch[1];
+          // Intentar la petición original primero
+          const response = await originalFetch(input, init);
+
+          // Si falla con 404 y es un recurso de vercel.app o transformice.com, intentar descargarlo
+          if (response.status === 404) {
+            let resourcePath: string | null = null;
+
+            // Extraer ruta de URLs de vercel.app
+            if (
+              url.includes("vercel.app/images/") ||
+              url.includes("vercel.app/langues/") ||
+              url.includes("vercel.app/drapeaux/")
+            ) {
+              const pathMatch = url.match(/vercel\.app\/(.+?)(?:\?|#|$)/);
+              if (pathMatch && pathMatch[1]) {
+                resourcePath = pathMatch[1];
+              }
+            }
+            // Extraer ruta de URLs de transformice.com
+            else if (url.includes("transformice.com/")) {
+              const pathMatch = url.match(/transformice\.com\/(.*?)(?:\?|#|$)/);
+              if (pathMatch && pathMatch[1]) {
+                resourcePath = pathMatch[1];
+              }
+            }
+
+            // Si encontramos una ruta válida, intentar descargarla vía proxy
+            if (resourcePath) {
               const proxyUrl = `/api/proxy-images/${resourcePath}`;
-              console.log(`🔄 Vercel URL: ${url} → ${proxyUrl}`);
+              console.log(
+                `⚠️  404 detectado: ${url} → Descargando vía ${proxyUrl}`
+              );
               return originalFetch(proxyUrl, init);
             }
           }
 
-          // Interceptar CUALQUIER petición a transformice.com
-          if (url.includes("transformice.com/")) {
-            const pathMatch = url.match(/transformice\.com\/(.*?)(?:\?|#|$)/);
-            if (pathMatch && pathMatch[1]) {
-              const resourcePath = pathMatch[1];
-              const proxyUrl = `/api/proxy-images/${resourcePath}`;
-              console.log(`🔄 Recurso: ${url} → ${proxyUrl}`);
-              return originalFetch(proxyUrl, init);
-            }
-          }
-
-          // Si es una petición relativa que falla, intentar desde transformice.com
-          if (
-            !url.startsWith("http") &&
-            !url.startsWith("//_next/") &&
-            !url.startsWith("/api/")
-          ) {
-            console.log(
-              `🔄 Ruta relativa: ${url} → /api/proxy-images/images/${url}`
-            );
-            return originalFetch(`/api/proxy-images/images/${url}`, init);
-          }
-
-          // Todo lo demás pasa directo
-          return originalFetch(input, init);
+          // Retornar la respuesta original si no fue 404 o no se pudo extraer la ruta
+          return response;
         };
 
         // También interceptar XMLHttpRequest para cualquier recurso de transformice.com
