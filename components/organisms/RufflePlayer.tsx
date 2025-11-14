@@ -168,7 +168,9 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
           }
           // Interceptar URLs de transformice.com (recursos externos que causarían CORS)
           else if (urlString.includes("transformice.com/")) {
-            const pathMatch = urlString.match(/transformice\.com\/(.*?)(?:\?|#|$)/);
+            const pathMatch = urlString.match(
+              /transformice\.com\/(.*?)(?:\?|#|$)/
+            );
             if (pathMatch && pathMatch[1]) {
               resourcePath = pathMatch[1];
             }
@@ -178,11 +180,25 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
           if (resourcePath) {
             const proxyUrl = `/api/proxy-images/${resourcePath}`;
             console.log(`🔄 XHR Proxy: ${urlString} → ${proxyUrl}`);
-            return originalXHROpen.call(this, method, proxyUrl, async, username, password);
+            return originalXHROpen.call(
+              this,
+              method,
+              proxyUrl,
+              async,
+              username,
+              password
+            );
           }
 
           // Peticiones locales pasan directamente
-          return originalXHROpen.call(this, method, url, async, username, password);
+          return originalXHROpen.call(
+            this,
+            method,
+            url,
+            async,
+            username,
+            password
+          );
         };
 
         // Configurar RufflePlayer ANTES de cargar el script
