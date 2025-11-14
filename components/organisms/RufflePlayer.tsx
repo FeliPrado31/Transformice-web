@@ -112,19 +112,8 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
 
           let resourcePath: string | null = null;
 
-          // Interceptar URLs de vercel.app (recursos externos que causarían CORS)
-          if (
-            url.includes("vercel.app/images/") ||
-            url.includes("vercel.app/langues/") ||
-            url.includes("vercel.app/drapeaux/")
-          ) {
-            const pathMatch = url.match(/vercel\.app\/(.+?)(?:\?|#|$)/);
-            if (pathMatch && pathMatch[1]) {
-              resourcePath = pathMatch[1];
-            }
-          }
-          // Interceptar URLs de transformice.com (recursos externos que causarían CORS)
-          else if (url.includes("transformice.com/")) {
+          // Interceptar URLs de transformice.app (recursos externos que causarían CORS)
+          if (url.includes("transformice.com/")) {
             const pathMatch = url.match(/transformice\.com\/(.*?)(?:\?|#|$)/);
             if (pathMatch && pathMatch[1]) {
               resourcePath = pathMatch[1];
