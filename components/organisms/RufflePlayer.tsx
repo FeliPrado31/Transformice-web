@@ -97,7 +97,7 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
         setIsLoading(true);
         setError(null);
 
-        // Interceptar fetch para capturar 404s y descargar recursos faltantes
+        // Interceptar fetch para redirigir recursos externos al proxy local
         const originalFetch = window.fetch;
         window.fetch = async function (
           input: RequestInfo | URL,
@@ -110,49 +110,40 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
               ? input.href
               : input.url;
 
-          // Intentar la petición original primero
-          const response = await originalFetch(input, init);
+          let resourcePath: string | null = null;
 
-          // Si falla con 404 y es un recurso de vercel.app o transformice.com, intentar descargarlo
-          if (response.status === 404) {
-            let resourcePath: string | null = null;
-
-            // Extraer ruta de URLs de vercel.app
-            if (
-              url.includes("vercel.app/images/") ||
-              url.includes("vercel.app/langues/") ||
-              url.includes("vercel.app/drapeaux/")
-            ) {
-              const pathMatch = url.match(/vercel\.app\/(.+?)(?:\?|#|$)/);
-              if (pathMatch && pathMatch[1]) {
-                resourcePath = pathMatch[1];
-              }
+          // Interceptar URLs de vercel.app (recursos externos que causarían CORS)
+          if (
+            url.includes("vercel.app/images/") ||
+            url.includes("vercel.app/langues/") ||
+            url.includes("vercel.app/drapeaux/")
+          ) {
+            const pathMatch = url.match(/vercel\.app\/(.+?)(?:\?|#|$)/);
+            if (pathMatch && pathMatch[1]) {
+              resourcePath = pathMatch[1];
             }
-            // Extraer ruta de URLs de transformice.com
-            else if (url.includes("transformice.com/")) {
-              const pathMatch = url.match(/transformice\.com\/(.*?)(?:\?|#|$)/);
-              if (pathMatch && pathMatch[1]) {
-                resourcePath = pathMatch[1];
-              }
-            }
-
-            // Si encontramos una ruta válida, intentar descargarla vía proxy
-            if (resourcePath) {
-              const proxyUrl = `/api/proxy-images/${resourcePath}`;
-              console.log(
-                `⚠️  404 detectado: ${url} → Descargando vía ${proxyUrl}`
-              );
-              return originalFetch(proxyUrl, init);
+          }
+          // Interceptar URLs de transformice.com (recursos externos que causarían CORS)
+          else if (url.includes("transformice.com/")) {
+            const pathMatch = url.match(/transformice\.com\/(.*?)(?:\?|#|$)/);
+            if (pathMatch && pathMatch[1]) {
+              resourcePath = pathMatch[1];
             }
           }
 
-          // Retornar la respuesta original si no fue 404 o no se pudo extraer la ruta
-          return response;
+          // Si encontramos una ruta válida, usar el proxy local que descarga bajo demanda
+          if (resourcePath) {
+            const proxyUrl = `/api/proxy-images/${resourcePath}`;
+            console.log(`🔄 Proxy: ${url} → ${proxyUrl}`);
+            return originalFetch(proxyUrl, init);
+          }
+
+          // Peticiones locales pasan directamente
+          return originalFetch(input, init);
         };
 
-        // Interceptar XMLHttpRequest para capturar 404s
+        // Interceptar XMLHttpRequest para redirigir recursos externos al proxy
         const originalXHROpen = XMLHttpRequest.prototype.open;
-        const originalXHRSend = XMLHttpRequest.prototype.send;
 
         XMLHttpRequest.prototype.open = function (
           method: string,
@@ -161,88 +152,37 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
           username?: string | null,
           password?: string | null
         ) {
-          // Guardar la URL original en el objeto XHR
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (this as any)._originalUrl =
-            typeof url === "string" ? url : url.toString();
-          return originalXHROpen.call(
-            this,
-            method,
-            url,
-            async,
-            username,
-            password
-          );
-        };
+          const urlString = typeof url === "string" ? url : url.toString();
+          let resourcePath: string | null = null;
 
-        XMLHttpRequest.prototype.send = function (
-          body?: Document | XMLHttpRequestBodyInit | null
-        ) {
-          // eslint-disable-next-line @typescript-eslint/no-this-alias
-          const self = this;
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const originalUrl = (self as any)._originalUrl;
-
-          // Interceptar el evento load para detectar 404
-          const originalOnLoad = self.onload;
-          self.onload = function (event) {
-            if (self.status === 404 && originalUrl) {
-              let resourcePath: string | null = null;
-
-              // Extraer ruta de URLs de vercel.app
-              if (
-                originalUrl.includes("vercel.app/images/") ||
-                originalUrl.includes("vercel.app/langues/") ||
-                originalUrl.includes("vercel.app/drapeaux/")
-              ) {
-                const pathMatch = originalUrl.match(
-                  /vercel\.app\/(.+?)(?:\?|#|$)/
-                );
-                if (pathMatch && pathMatch[1]) {
-                  resourcePath = pathMatch[1];
-                }
-              }
-              // Extraer ruta de URLs de transformice.com
-              else if (originalUrl.includes("transformice.com/")) {
-                const pathMatch = originalUrl.match(
-                  /transformice\.com\/(.*?)(?:\?|#|$)/
-                );
-                if (pathMatch && pathMatch[1]) {
-                  resourcePath = pathMatch[1];
-                }
-              }
-
-              // Si encontramos una ruta válida, reintentar con el proxy
-              if (resourcePath) {
-                const proxyUrl = `/api/proxy-images/${resourcePath}`;
-                console.log(
-                  `⚠️  XHR 404 detectado: ${originalUrl} → Descargando vía ${proxyUrl}`
-                );
-
-                // Crear nueva petición con el proxy
-                const newXhr = new XMLHttpRequest();
-                originalXHROpen.call(newXhr, "GET", proxyUrl, true);
-
-                // Copiar handlers del XHR original
-                if (originalOnLoad) {
-                  newXhr.onload = originalOnLoad.bind(self);
-                }
-                newXhr.onerror = self.onerror;
-                newXhr.onprogress = self.onprogress;
-                newXhr.responseType = self.responseType;
-
-                originalXHRSend.call(newXhr, body);
-                return;
-              }
+          // Interceptar URLs de vercel.app (recursos externos que causarían CORS)
+          if (
+            urlString.includes("vercel.app/images/") ||
+            urlString.includes("vercel.app/langues/") ||
+            urlString.includes("vercel.app/drapeaux/")
+          ) {
+            const pathMatch = urlString.match(/vercel\.app\/(.+?)(?:\?|#|$)/);
+            if (pathMatch && pathMatch[1]) {
+              resourcePath = pathMatch[1];
             }
-
-            // Llamar al handler original si existe
-            if (originalOnLoad) {
-              originalOnLoad.call(self, event);
+          }
+          // Interceptar URLs de transformice.com (recursos externos que causarían CORS)
+          else if (urlString.includes("transformice.com/")) {
+            const pathMatch = urlString.match(/transformice\.com\/(.*?)(?:\?|#|$)/);
+            if (pathMatch && pathMatch[1]) {
+              resourcePath = pathMatch[1];
             }
-          };
+          }
 
-          return originalXHRSend.call(this, body);
+          // Si encontramos una ruta válida, usar el proxy local
+          if (resourcePath) {
+            const proxyUrl = `/api/proxy-images/${resourcePath}`;
+            console.log(`🔄 XHR Proxy: ${urlString} → ${proxyUrl}`);
+            return originalXHROpen.call(this, method, proxyUrl, async, username, password);
+          }
+
+          // Peticiones locales pasan directamente
+          return originalXHROpen.call(this, method, url, async, username, password);
         };
 
         // Configurar RufflePlayer ANTES de cargar el script
