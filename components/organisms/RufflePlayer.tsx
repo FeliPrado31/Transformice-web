@@ -38,7 +38,8 @@ const loadRuffleScript = (): Promise<void> =>
     }
 
     const script = document.createElement("script");
-    script.src = "https://unpkg.com/@ruffle-rs/ruffle@latest/ruffle.js";
+    script.src =
+      "https://unpkg.com/@ruffle-rs/ruffle@0.1.0-nightly.2024.12.31/ruffle.js";
     script.async = true;
     script.setAttribute("data-ruffle", "true");
     script.onload = () => resolve();
@@ -96,73 +97,14 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
         setIsLoading(true);
         setError(null);
 
-        // Interceptar SOLO peticiones de imágenes para descargarlas automáticamente
-        const originalFetch = window.fetch;
-        window.fetch = function (
-          input: RequestInfo | URL,
-          init?: RequestInit
-        ): Promise<Response> {
-          const url =
-            typeof input === "string"
-              ? input
-              : input instanceof URL
-              ? input.href
-              : input.url;
+        // Configurar RufflePlayer DESPUÉS de cargar el script
+        await loadRuffleScript();
 
-          // Interceptar SOLO imágenes
-          if (url.includes("/images/")) {
-            const imagePath = url.split("/images/")[1].split("?")[0];
-            const proxyUrl = `/api/proxy-images/${imagePath}`;
-            console.log(`🔄 Imagen: ${url} → ${proxyUrl}`);
-            return originalFetch(proxyUrl, init);
-          }
-
-          // Todo lo demás pasa directo (incluye servidor de juego)
-          return originalFetch(input, init);
-        };
-
-        // También interceptar XMLHttpRequest para imágenes
-        const originalXHROpen = XMLHttpRequest.prototype.open;
-        XMLHttpRequest.prototype.open = function (
-          method: string,
-          url: string | URL,
-          async: boolean = true,
-          username?: string | null,
-          password?: string | null
-        ) {
-          const urlString = typeof url === "string" ? url : url.toString();
-
-          // Interceptar SOLO imágenes
-          if (urlString.includes("/images/")) {
-            const imagePath = urlString.split("/images/")[1].split("?")[0];
-            const proxyUrl = `/api/proxy-images/${imagePath}`;
-            console.log(`🔄 XHR Imagen: ${urlString} → ${proxyUrl}`);
-            return originalXHROpen.call(
-              this,
-              method,
-              proxyUrl,
-              async,
-              username,
-              password
-            );
-          }
-
-          return originalXHROpen.call(
-            this,
-            method,
-            url,
-            async,
-            username,
-            password
-          );
-        };
-
-        // Configurar RufflePlayer ANTES de cargar el script
         window.RufflePlayer = window.RufflePlayer || {};
         window.RufflePlayer.config = {
           preloader: false,
           warnOnUnsupportedContent: false,
-          logLevel: "info",
+          logLevel: "debug",
           autoplay: "on",
           unmuteOverlay: "hidden",
           letterbox: "fullscreen",
@@ -171,8 +113,6 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
           showSwfDownload: false,
           socketProxy: SOCKET_PROXY_ENTRIES,
         };
-
-        await loadRuffleScript();
 
         if (!mounted || !container) return;
 
