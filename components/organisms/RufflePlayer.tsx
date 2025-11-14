@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 const TRANSFORMICE_HOST =
   process.env.NEXT_PUBLIC_TRANSFORMICE_HOST ?? "15.204.211.244";
 const SOCKET_PROXY_URL =
-  process.env.NEXT_PUBLIC_SOCKET_PROXY_URL ?? "ws://localhost:2096";
+  process.env.NEXT_PUBLIC_SOCKET_PROXY_URL ?? "ws://15.204.211.244:2096";
 const PRIMARY_TRANSFORMICE_PORT_RAW = Number.parseInt(
   process.env.NEXT_PUBLIC_TRANSFORMICE_PORT ?? "11801",
   10
@@ -27,11 +27,51 @@ const SOCKET_PROXY_ENTRIES = (
   proxyUrl: `${SOCKET_PROXY_URL}?port=${port}`,
 }));
 
+const loadRuffleScript = (): Promise<void> =>
+  new Promise((resolve, reject) => {
+    if (
+      document.querySelector("script[data-ruffle]") ||
+      window.RufflePlayer?.newest
+    ) {
+      resolve();
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/@ruffle-rs/ruffle@latest/ruffle.js";
+    script.async = true;
+    script.setAttribute("data-ruffle", "true");
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load Ruffle script"));
+    document.head.appendChild(script);
+  });
+
+const waitForRuffleFactory = async (
+  attempts = 20,
+  delayMs = 250
+): Promise<(() => RuffleInstance) | undefined> => {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const factory = window.RufflePlayer?.newest?.();
+    if (factory) {
+      return factory.createPlayer;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  return undefined;
+};
+
+type RuffleInstance = HTMLElement & {
+  load: (url: string) => void;
+};
+
 declare global {
   interface Window {
     RufflePlayer?: {
       config?: Record<string, unknown>;
-      [key: string]: unknown;
+      newest?: () => {
+        createPlayer: () => RuffleInstance;
+      };
     };
   }
 }
@@ -118,10 +158,8 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
         };
 
         // Configurar RufflePlayer ANTES de cargar el script
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (window as any).RufflePlayer = (window as any).RufflePlayer || {};
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (window as any).RufflePlayer.config = {
+        window.RufflePlayer = window.RufflePlayer || {};
+        window.RufflePlayer.config = {
           preloader: false,
           warnOnUnsupportedContent: false,
           logLevel: "info",
@@ -134,64 +172,29 @@ export default function RufflePlayer({ className = "" }: RufflePlayerProps) {
           socketProxy: SOCKET_PROXY_ENTRIES,
         };
 
-        // Load Ruffle from CDN to avoid WASM loading issues
-        const script = document.createElement("script");
-        script.src = "https://unpkg.com/@ruffle-rs/ruffle@latest/ruffle.js";
-        script.async = true;
+        await loadRuffleScript();
 
-        script.onload = () => {
-          if (!mounted || !container) return;
+        if (!mounted || !container) return;
 
-          try {
-            // Configurar Ruffle siguiendo el patrón de mice2.com
-            // Usar el enfoque de ruffle-object (como mice2.com)
-            container.innerHTML = `
-              <ruffle-object 
-                data="/Transformice.swf" 
-                type="application/x-shockwave-flash" 
-                width="100%" 
-                height="100%"
-                style="display: block; width: 100%; height: 100%;"
-              >
-                <param name="wmode" value="direct">
-                <param name="allowScriptAccess" value="always">
-                <param name="allowfullscreen" value="true">
-                <param name="allowfullscreeninteractive" value="true">
-                <param name="allownetworkingmode" value="all">
-              </ruffle-object>
-            `;
+        const createPlayer = await waitForRuffleFactory();
+        if (!createPlayer) {
+          throw new Error("Ruffle could not initialize");
+        }
 
-            console.log(
-              `✅ Ruffle player ready → server ${TRANSFORMICE_HOST}:${PRIMARY_TRANSFORMICE_PORT} via ${SOCKET_PROXY_URL}`
-            );
-            if (mounted) {
-              setIsLoading(false);
-            }
-          } catch (err) {
-            console.error("Error configurando Ruffle:", err);
-            // Fallback a método antiguo
-            container.innerHTML = `
-              <embed
-                src="/Transformice.swf"
-                width="100%"
-                height="600"
-                style="display: block;"
-              />
-            `;
-            if (mounted) {
-              setIsLoading(false);
-            }
-          }
-        };
+        const player = createPlayer();
 
-        script.onerror = () => {
-          if (mounted) {
-            setError("Failed to load Ruffle player");
-            setIsLoading(false);
-          }
-        };
+        player.style.width = "100%";
+        player.style.height = "100%";
+        player.load("/Transformice.swf");
 
-        document.head.appendChild(script);
+        container.replaceChildren(player);
+
+        console.log(
+          `✅ Ruffle player ready → server ${TRANSFORMICE_HOST}:${PRIMARY_TRANSFORMICE_PORT} via ${SOCKET_PROXY_URL}`
+        );
+        if (mounted) {
+          setIsLoading(false);
+        }
       } catch (err) {
         console.error("Error loading Ruffle:", err);
         if (mounted) {
